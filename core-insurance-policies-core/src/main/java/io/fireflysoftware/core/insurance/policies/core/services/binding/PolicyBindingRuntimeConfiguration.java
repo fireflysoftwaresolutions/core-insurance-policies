@@ -2,6 +2,7 @@ package io.fireflysoftware.core.insurance.policies.core.services.binding;
 
 import io.fireflysoftware.core.insurance.policies.core.services.binding.impl.*;
 import io.r2dbc.spi.ConnectionFactory;
+import io.fireflysoftware.core.insurance.policies.models.config.R2dbcConfiguration;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -26,6 +27,7 @@ import org.springframework.http.client.reactive.JdkClientHttpConnector;
 import org.springframework.r2dbc.connection.R2dbcTransactionManager;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
+import org.springframework.data.r2dbc.core.DefaultReactiveDataAccessStrategy;
 import org.springframework.data.r2dbc.dialect.PostgresDialect;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
@@ -54,7 +56,7 @@ public class PolicyBindingRuntimeConfiguration {
     GovernedPolicyService configuredGovernedPolicyService(PolicyBindingRuntimeProperties settings,BeanFactory beans){
         var delegate=beans.getBean(settings.connectionFactoryBean(),ConnectionFactory.class);
         var factory=delegate instanceof OwnedLeaseConnectionFactory held?held:new OwnedLeaseConnectionFactory(delegate);
-        var client=DatabaseClient.create(factory);var template=new R2dbcEntityTemplate(client,PostgresDialect.INSTANCE);
+        var client=DatabaseClient.create(factory);var template=new R2dbcEntityTemplate(client,new DefaultReactiveDataAccessStrategy(PostgresDialect.INSTANCE,R2dbcConfiguration.policyEnumConverters()));
         var manager=new R2dbcTransactionManager(factory);var resources=BoundedR2dbcResources.verify(factory,client,template,manager);
         var pdp=new OpaPolicyEvaluationAdapter(quietTransport().mutate().baseUrl(settings.pdpEndpoint().toASCIIString()).build(),settings.pdpDecisionPath());
         var authority=new SandboxPolicyBindingAdmissionImpl(new ReactorSecurityContextAdapter(),pdp,settings.profile(),Clock.systemUTC(),System::nanoTime,UUID::randomUUID,settings.bindingNotAfter());

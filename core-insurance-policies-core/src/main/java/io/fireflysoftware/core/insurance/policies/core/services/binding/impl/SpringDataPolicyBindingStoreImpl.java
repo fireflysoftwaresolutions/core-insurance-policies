@@ -137,7 +137,7 @@ public final class SpringDataPolicyBindingStoreImpl implements PolicyBindingStor
             .then(receipts.findByReceiptIdAndTenantIdAndOwnerIssuerAndOwnerSubject(receiptId,permit.resourceTenantId(),permit.actor().issuer(),permit.actor().subject())
                 .filter(receipt::equals).switchIfEmpty(Mono.error(refused())).then());
     }
-    private Mono<Void> insert(Object row){var strategy=template.getDataAccessStrategy();var mapper=strategy.getStatementMapper().forType(row.getClass());
+    private Mono<Void> insert(Object row){var strategy=template.getDataAccessStrategy();var mapper=strategy.getStatementMapper();
         StatementMapper.InsertSpec insert=mapper.createInsert(strategy.getTableName(row.getClass()));var outbound=strategy.getOutboundRow(row);
         for(var column:outbound.keySet())insert=insert.withColumn(column,outbound.get(column));
         return one(template.getDatabaseClient().sql(mapper.getMappedObject(insert)).fetch().rowsUpdated());

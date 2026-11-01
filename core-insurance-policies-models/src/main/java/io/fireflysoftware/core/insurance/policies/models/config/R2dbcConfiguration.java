@@ -17,6 +17,13 @@
 
 package io.fireflysoftware.core.insurance.policies.models.config;
 
+import io.fireflysoftware.core.insurance.policies.interfaces.enums.LineOfBusiness;
+import io.fireflysoftware.core.insurance.policies.interfaces.enums.PolicyStatus;
+import io.fireflysoftware.core.insurance.policies.models.config.impl.LineOfBusinessWriteConverterImpl;
+import io.fireflysoftware.core.insurance.policies.models.config.impl.PolicyStatusWriteConverterImpl;
+import io.r2dbc.postgresql.codec.EnumCodec;
+import io.r2dbc.postgresql.extension.CodecRegistrar;
+import java.util.List;
 import io.r2dbc.postgresql.PostgresqlConnectionConfiguration;
 import io.r2dbc.postgresql.PostgresqlConnectionFactory;
 import io.r2dbc.postgresql.client.SSLMode;
@@ -63,7 +70,24 @@ public class R2dbcConfiguration extends AbstractR2dbcConfiguration {
                         .password(password)
                         .database(database)
                         .sslMode(SSLMode.valueOf(sslMode.toUpperCase()))
+                        .codecRegistrar(policyEnumCodecs())
                         .build()
         );
+    }
+
+    public static CodecRegistrar policyEnumCodecs() {
+        return EnumCodec.builder()
+                .withEnum("policy_status_enum", PolicyStatus.class)
+                .withEnum("line_of_business_enum", LineOfBusiness.class)
+                .build();
+    }
+
+    public static List<Object> policyEnumConverters() {
+        return List.of(new PolicyStatusWriteConverterImpl(), new LineOfBusinessWriteConverterImpl());
+    }
+
+    @Override
+    protected List<Object> getCustomConverters() {
+        return policyEnumConverters();
     }
 }
