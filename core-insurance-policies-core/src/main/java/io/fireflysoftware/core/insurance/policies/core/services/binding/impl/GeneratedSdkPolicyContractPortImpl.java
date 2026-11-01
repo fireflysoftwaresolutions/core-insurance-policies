@@ -21,7 +21,7 @@ public final class GeneratedSdkPolicyContractPortImpl implements PolicyContractP
             binding(permit,current);var role=current.binding().policyholderRoleId();
             var filter=new FilterRequestContractPartyDTO().filters(new ContractPartyDTO().contractId(request.contractId()).partyId(request.partyId()).roleInContractId(role).isActive(true))
                 .pagination(new PaginationRequest().pageNumber(0).pageSize(2).sortBy("contractPartyId").sortDirection("ASC"));
-            return Mono.zip(current.contracts().getContractByIdWithHttpInfo(request.contractId(),null),current.parties().filterContractPartiesWithHttpInfo(request.contractId(),filter,null))
+            return Mono.zip(current.contracts().getContractByIdWithHttpInfo(request.contractId(),null),current.parties().filterContractPartiesWithHttpInfo(request.contractId(),filter))
                 .timeout(permit.remaining(clock,System::nanoTime)).switchIfEmpty(Mono.error(refused())).flatMap(pair->{
                     binding(permit,current);
                     if(pair.getT1().getStatusCode().value()!=200 || pair.getT2().getStatusCode().value()!=200)return Mono.error(refused());
@@ -32,7 +32,8 @@ public final class GeneratedSdkPolicyContractPortImpl implements PolicyContractP
                         || request.expiryDate().atStartOfDay().isAfter(contract.getEndDate()) || page.getCurrentPage()==null || page.getCurrentPage()!=0
                         || page.getTotalPages()==null || page.getTotalPages()!=1 || page.getTotalElements()==null || page.getTotalElements()!=1
                         || page.getContent()==null || page.getContent().size()!=1)return Mono.error(refused());
-                    if(!(page.getContent().getFirst() instanceof ContractPartyDTO party)
+                    ContractPartyDTO party=page.getContent().getFirst();
+                    if(party==null
                         || party.getContractPartyId()==null || !request.contractId().equals(party.getContractId()) || !request.partyId().equals(party.getPartyId())
                         || !role.equals(party.getRoleInContractId()) || !Boolean.TRUE.equals(party.getIsActive()) || party.getDateJoined()==null
                         || request.inceptionDate().atStartOfDay().isBefore(party.getDateJoined())
