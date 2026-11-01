@@ -75,7 +75,7 @@ public class PolicyServiceImpl implements PolicyService {
                     PolicyStatus next = existing.getPolicyStatus() != null
                             ? existing.getPolicyStatus()
                             : current;
-                    if (!PolicyLifecycle.canTransition(current, next)) {
+                    if (!PolicyLifecycleImpl.canTransition(current, next)) {
                         return Mono.error(new IllegalStateException(
                                 "Policy " + policyId + " cannot move from " + current + " to " + next));
                     }
