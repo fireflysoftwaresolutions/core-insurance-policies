@@ -1,0 +1,40 @@
+package io.fireflysoftware.core.insurance.policies.core.services.binding.fixture;
+
+import io.fireflysoftware.core.insurance.policies.core.services.binding.*;
+import io.fireflysoftware.core.insurance.policies.core.services.binding.impl.SpringDataPolicyBindingStoreImpl;
+import io.fireflysoftware.core.insurance.policies.interfaces.binding.*;
+import java.math.BigDecimal;
+import java.time.*;
+import java.util.*;
+import org.fireflyframework.core.audit.AuditAppendAuthority;
+import org.fireflyframework.core.transaction.CleanupPolicy;
+import org.fireflyframework.kernel.audit.AuditActor;
+import org.fireflyframework.security.api.domain.PolicyEvaluationProvenance;
+import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
+import reactor.test.StepVerifier;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/** Real SpringData mapping and genuine Root/appender over a controlled SPI; never PostgreSQL or physical commit proof. */
+class SpringDataPolicyBindingStoreTest {
+    final PolicyBindingMappedFixture db=new PolicyBindingMappedFixture();final String digest="a".repeat(64);final UUID tenant=UUID.randomUUID();
+    final PolicyBindingAdmission authority=mock(PolicyBindingAdmission.class,withSettings().extraInterfaces(AuditAppendAuthority.class).defaultAnswer(CALLS_REAL_METHODS));
+    final GovernedPolicyBindRequest request=new GovernedPolicyBindRequest(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),1,1,UUID.randomUUID(),digest,digest,UUID.randomUUID(),"SANDBOX-1",LocalDate.of(2027,1,1),LocalDate.of(2028,1,1));
+    PolicyBindingAdmission.Permit permit(PolicyBindingAdmission.Action action,UUID id,String intent,UUID policyId){var now=db.clock.instant();return new PolicyBindingAdmission.Permit(new PolicyBindingAdmission.Request(action,id,intent,policyId,action==PolicyBindingAdmission.Action.BIND?request.submissionId():null,action==PolicyBindingAdmission.Action.BIND?request.partyId():null,action==PolicyBindingAdmission.Action.BIND?request.productId():null,action==PolicyBindingAdmission.Action.BIND?request:null),tenant,request.partyId(),UUID.randomUUID(),1,digest,new AuditActor("https://synthetic.invalid","opaque subject","synthetic-client",tenant.toString(),null,null),"policy-v1",UUID.randomUUID(),UUID.randomUUID(),now,System.nanoTime(),now.plusSeconds(5));}
+    final PolicyBindingAdmission.Permit binding=permit(PolicyBindingAdmission.Action.BIND,request.actionId(),request.intentDigest(),null);
+    SpringDataPolicyBindingStoreTest(){when(authority.revalidate(any())).thenReturn(Mono.empty());when(authority.requireDecisionEvidence(any())).thenReturn(Mono.just(new PolicyBindingDecisionEvidence(new PolicyEvaluationProvenance("policy-v1","actual-authorization-control"),new PolicyEvaluationProvenance("policy-v1","actual-admission-control"))));
+        when(((AuditAppendAuthority)authority).requireCurrent(any())).thenAnswer(call->{org.fireflyframework.kernel.audit.AuditEvent event=call.getArgument(0);return Mono.just(new AuditAppendAuthority.Permit(event.stream(),event.actor(),db.clock.instant().plusSeconds(1)));});}
+    AcceptedQuoteEvidence quote(){return new AcceptedQuoteEvidence(tenant,request.submissionId(),request.partyId(),request.productId(),request.offerId(),1,1,request.acceptanceActionId(),UUID.randomUUID(),digest,digest,"USD",new BigDecimal("25.00"),new BigDecimal("1.25"),new BigDecimal("10.00"),Map.of("coverageCode","SANDBOX_PROPERTY_DAMAGE","coverageStart","2027-01-01","coverageEnd","2028-01-01","insuredLimit","1000.00","deductible","100.00","wording","Illustrative only","exclusions","Synthetic exclusions"),UUID.randomUUID(),digest,digest,"firefly-sandbox-property-1","illustrative-property-1",db.clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS),"https://synthetic.invalid","opaque subject");}
+    SpringDataPolicyBindingStoreImpl store(){var root=new PolicyBindingAuditRootImpl(db.resources,db.client,db.template,db.manager,new CleanupPolicy(Duration.ofSeconds(1),Duration.ofSeconds(1)),(AuditAppendAuthority)authority,authority,db.clock,db.nanos);return new SpringDataPolicyBindingStoreImpl(db.template,root,UUID::randomUUID);}
+    int rows(String table){return db.driver.tables.getOrDefault(table,List.of()).size();}
+    @Test void aSingleOwnedRootPairsCanonicalAuditPolicyReceiptAndActualDecisionIds(){var result=store().bind(binding,request,quote()).block(Duration.ofSeconds(2));assertNotNull(result);assertEquals(GovernedPolicyCommandResponse.Status.COMMITTED,result.status());assertEquals(1,rows("policy"));assertEquals(1,rows("policy_party"));assertEquals(1,rows("policy_transaction"));assertEquals(1,rows("coverage"));assertEquals(1,rows("policy_status_history"));assertEquals(1,rows("binding"));assertEquals(1,rows("operation"));assertEquals(1,rows("receipt"));assertEquals(1,rows("audit_event"));assertEquals(1,db.driver.commits);assertEquals("actual-authorization-control",db.driver.tables.get("operation").getFirst().get("authorization_decision_id"));assertEquals("actual-admission-control",db.driver.tables.get("operation").getFirst().get("admission_decision_id"));}
+    @Test void repeatingTheSameActionReadsTheOriginalReceiptWithoutAnotherBusinessOrAuditAppend(){var adapter=store();var observed=quote();var first=adapter.bind(binding,request,observed).block();int writes=db.driver.writes;var second=adapter.bind(binding,request,observed).block();assertEquals(first,second);assertEquals(writes,db.driver.writes);assertEquals(1,rows("audit_event"));}
+    @Test void absentInstalledProtocolCannotAcquireAnyBusinessSuccess(){db.driver.protocol=false;assertThrows(PolicyBindingWriteFailure.class,()->store().bind(binding,request,quote()).block());assertEquals(0,rows("policy"));assertEquals(0,rows("audit_event"));assertEquals(0,db.driver.commits);}
+    @Test void zeroAssignedPolicyInsertRollsBackCanonicalAppendAndAllBusinessEffects(){db.driver.beforeMutation=()->{var sql=db.driver.sql.getLast().replace("\"","");if(sql.startsWith("INSERT INTO policy ")){db.driver.countAtWrite=db.driver.writes+1;db.driver.writeCount=0;}};assertThrows(PolicyBindingWriteFailure.class,()->store().bind(binding,request,quote()).block());assertEquals(0,rows("policy"));assertEquals(0,rows("audit_event"));assertEquals(0,rows("receipt"));assertEquals(0,db.driver.commits);assertEquals(1,db.driver.rollbacks);}
+    @Test void failedReceiptGraphRollsBackThePairedPolicyAndAppend(){db.driver.receiptGraph=false;assertThrows(PolicyBindingWriteFailure.class,()->store().bind(binding,request,quote()).block());assertEquals(0,rows("policy"));assertEquals(0,rows("audit_event"));assertEquals(0,db.driver.commits);}
+    @Test void pendingCommitCannotPublishTheBoundPolicyReceipt(){var gate=Sinks.<Void>empty();db.driver.commitGate=gate.asMono();StepVerifier.create(store().bind(binding,request,quote())).expectSubscription().then(()->assertEquals(0,db.driver.commits)).then(()->gate.tryEmitEmpty()).assertNext(value->assertEquals(GovernedPolicyCommandResponse.Status.COMMITTED,value.status())).verifyComplete();assertEquals(1,db.driver.commits);}
+    @Test void activationUsesVersionAndReceiptCasRatherThanUnconditionalStatusSave(){var adapter=store();var bound=adapter.bind(binding,request,quote()).block().result();var issue=new GovernedPolicyIssueRequest(UUID.randomUUID(),bound.bindingVersion(),bound.bindingReceiptDigest());var active=adapter.issue(permit(PolicyBindingAdmission.Action.ISSUE,issue.actionId(),issue.intentDigest(bound.policyId()),bound.policyId()),bound.policyId(),issue).block();assertEquals(io.fireflysoftware.core.insurance.policies.interfaces.enums.PolicyStatus.IN_FORCE,active.result().policyStatus());assertEquals(2,active.result().bindingVersion());assertEquals(2,rows("audit_event"));assertTrue(db.driver.sql.stream().anyMatch(s->s.startsWith("UPDATE")&&s.contains("binding_version")&&s.contains("binding_receipt_digest")&&s.contains("owner_subject")));}
+}

@@ -26,7 +26,7 @@ import java.util.Set;
 /**
  * Allowed moves for a policy. A quote is the only status that can be removed.
  */
-final class PolicyLifecycle {
+final class PolicyLifecycleImpl {
 
     private static final Map<PolicyStatus, Set<PolicyStatus>> ALLOWED = Map.of(
             PolicyStatus.QUOTE, EnumSet.of(PolicyStatus.BOUND, PolicyStatus.CANCELLED),
@@ -35,7 +35,7 @@ final class PolicyLifecycle {
             PolicyStatus.LAPSED, EnumSet.of(PolicyStatus.IN_FORCE, PolicyStatus.CANCELLED, PolicyStatus.EXPIRED)
     );
 
-    private PolicyLifecycle() {
+    private PolicyLifecycleImpl() {
     }
 
     static boolean canTransition(PolicyStatus from, PolicyStatus to) {
