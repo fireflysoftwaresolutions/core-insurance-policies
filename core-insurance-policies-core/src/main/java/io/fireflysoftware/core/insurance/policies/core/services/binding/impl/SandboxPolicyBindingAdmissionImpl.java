@@ -28,13 +28,17 @@ public final class SandboxPolicyBindingAdmissionImpl implements PolicyBindingAdm
     private final SecurityContextPort security;
     private final PolicyEvaluationPort pdp;
     private final Profile profile;
+    private final Instant configurationNotAfter;
     private final Clock clock;
     private final java.util.function.LongSupplier nanos;
     private final Supplier<UUID> ids;
     private final Object executionKey=new Object(),appendKey=new Object();
     public SandboxPolicyBindingAdmissionImpl(SecurityContextPort security,PolicyEvaluationPort pdp,Profile profile,Clock clock,
-            java.util.function.LongSupplier nanos,Supplier<UUID> ids){this.security=Objects.requireNonNull(security);this.pdp=Objects.requireNonNull(pdp);
-        this.profile=Objects.requireNonNull(profile);this.clock=Objects.requireNonNull(clock);this.nanos=Objects.requireNonNull(nanos);this.ids=Objects.requireNonNull(ids);}
+            java.util.function.LongSupplier nanos,Supplier<UUID> ids){this(security,pdp,profile,clock,nanos,ids,Instant.MAX);}
+    public SandboxPolicyBindingAdmissionImpl(SecurityContextPort security,PolicyEvaluationPort pdp,Profile profile,Clock clock,
+            java.util.function.LongSupplier nanos,Supplier<UUID> ids,Instant configurationNotAfter){this.security=Objects.requireNonNull(security);this.pdp=Objects.requireNonNull(pdp);
+        this.profile=Objects.requireNonNull(profile);this.clock=Objects.requireNonNull(clock);this.nanos=Objects.requireNonNull(nanos);this.ids=Objects.requireNonNull(ids);
+        this.configurationNotAfter=Objects.requireNonNull(configurationNotAfter);}
     public GovernedPolicyService scoped(GovernedPolicyService delegate){return new GovernedPolicyService(){
         public Mono<GovernedPolicyCommandResponse> bind(GovernedPolicyBindRequest r){return writeInvoke(Request.bind(r),()->delegate.bind(r));}
         public Mono<GovernedPolicyCommandResponse> issue(UUID policyId,GovernedPolicyIssueRequest r){return writeInvoke(new Request(Action.ISSUE,r.actionId(),r.intentDigest(policyId),policyId,null,null,null,null),()->delegate.issue(policyId,r));}
@@ -50,6 +54,7 @@ public final class SandboxPolicyBindingAdmissionImpl implements PolicyBindingAdm
         if(context.hasKey(executionKey))return Mono.error(denied());Instant observed=clock.instant();long before=nanos.getAsLong();
         return security.currentPrincipal().switchIfEmpty(Mono.error(denied())).onErrorMap(error->denied()).flatMap(principal->{
             requirePrincipal(principal,request);Instant expiry=principal.claim("exp",Instant.class);Instant until=expiry.isBefore(observed.plusSeconds(5))?expiry:observed.plusSeconds(5);
+            until=configurationNotAfter.isBefore(until)?configurationNotAfter:until;if(!until.isAfter(observed))return Mono.error(denied());
             var execution=new ExecutionImpl(request,principal,observed,before,until,PolicyBindingValues.id(ids.get()),PolicyBindingValues.id(ids.get()));
             return Mono.using(()->execution,held->Mono.defer(work).timeout(remaining(held)).contextWrite(current->current.put(executionKey,held)),held->held.active.set(false),true).map(value->{
                 try{window(execution);}catch(PolicyBindingRefusedException expired){throw new ProjectionExpiredExceptionImpl(value);}
