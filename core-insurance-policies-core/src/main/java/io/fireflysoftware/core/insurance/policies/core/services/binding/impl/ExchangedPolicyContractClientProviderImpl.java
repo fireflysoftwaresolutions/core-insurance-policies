@@ -119,18 +119,22 @@ public final class ExchangedPolicyContractClientProviderImpl implements PolicyCo
         permit.remaining(clock,System::nanoTime);var now=clock.instant();
         Object rawScope=jwt.getClaims().get("scope");
         boolean targetScope=rawScope instanceof String value && Set.copyOf(java.util.Arrays.asList(value.split(" ",-1))).equals(SCOPES);
-        boolean originalScope=rawScope instanceof String value && Set.copyOf(java.util.Arrays.asList(value.split(" ",-1))).containsAll(SCOPES);
-        if(!originalScope || !issuer.equals(claim(jwt,"iss")) || !permit.actor().issuer().equals(claim(jwt,"iss"))
+        boolean originalScope=rawScope instanceof String value && Set.copyOf(java.util.Arrays.asList(value.split(" ",-1))).equals(Set.of(policyScope(permit)));
+        if(!(target?targetScope:originalScope) || !issuer.equals(claim(jwt,"iss")) || !permit.actor().issuer().equals(claim(jwt,"iss"))
             || !permit.actor().subject().equals(claim(jwt,"sub")) || !target && !permit.actor().clientId().equals(claim(jwt,clientClaim))
             || !"HUMAN".equals(claim(jwt,"principal_kind"))
             || !Objects.equals(permit.partyId().toString(),claim(jwt,"party_id"))
-            || !permit.resourceTenantId().toString().equals(claim(jwt,"tenant_id"))
             || !permit.actor().platformTenantId().equals(claim(jwt,"tenant_id"))
             || !(jwt.getClaims().get("exp") instanceof java.time.Instant) || !(jwt.getClaims().get("nbf") instanceof java.time.Instant)
             || jwt.getExpiresAt()==null || jwt.getNotBefore()==null || !jwt.getExpiresAt().isAfter(now) || jwt.getNotBefore().isAfter(now)
             || permit.notAfter().isAfter(jwt.getExpiresAt()) || target && (!(jwt.getClaims().get("aud") instanceof List<?> values) || values.size()!=1 || !(values.getFirst() instanceof String) || !audience.equals(values.getFirst())
                 || !targetScope || !delegatingClient.equals(claim(jwt,clientClaim)) || jwt.getExpiresAt().isAfter(original.getExpiresAt())))throw unavailable();
     }
+    private static String policyScope(PolicyBindingAdmission.Permit permit){return switch(permit.request().action()){
+        case BIND -> "insurance:policies:bind";
+        case ISSUE -> "insurance:policies:issue";
+        case RECOVER -> throw unavailable();
+    };}
     private static JdkClientHttpConnector productionConnector(ClientRegistration registration,String issuer,String audience,String clientClaim,String client,URI endpoint){
         Objects.requireNonNull(registration);required(issuer);required(audience);required(clientClaim);required(client);https(endpoint);tokenEndpoint(registration);
         if(!AuthorizationGrantType.TOKEN_EXCHANGE.equals(registration.getAuthorizationGrantType())

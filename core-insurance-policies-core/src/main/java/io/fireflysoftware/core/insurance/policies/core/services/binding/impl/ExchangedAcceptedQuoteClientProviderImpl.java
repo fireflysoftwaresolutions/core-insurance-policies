@@ -25,7 +25,9 @@ import org.springframework.security.oauth2.client.registration.ClientRegistratio
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
-import org.springframework.security.oauth2.core.web.reactive.function.OAuth2BodyExtractors;
+import org.springframework.security.oauth2.core.endpoint.DefaultMapOAuth2AccessTokenResponseConverter;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.web.reactive.function.BodyExtractors;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -68,10 +70,17 @@ public final class ExchangedAcceptedQuoteClientProviderImpl implements AcceptedQ
                 response.statusCode().is2xxSuccessful()?Mono.just(response):response.releaseBody().then(Mono.error(unavailable())))).build();
         exchange.setWebClient(transport);
         exchange.addParametersConverter(request->{var values=new LinkedMultiValueMap<String,String>();values.set("audience",audience);return values;});
-        exchange.setBodyExtractor((message,context)->OAuth2BodyExtractors.oauth2AccessTokenResponse().extract(message,new BodyExtractor.Context(){
+        var converter=new DefaultMapOAuth2AccessTokenResponseConverter();
+        exchange.setBodyExtractor((message,context)->BodyExtractors.toMono(new ParameterizedTypeReference<Map<String,Object>>(){}).extract(message,new BodyExtractor.Context(){
             public List<HttpMessageReader<?>> messageReaders(){return context.messageReaders();}
             public Optional<ServerHttpResponse> serverResponse(){return context.serverResponse();}
             public Map<String,Object> hints(){var hints=new java.util.HashMap<String,Object>(context.hints());hints.put(Hints.SUPPRESS_LOGGING_HINT,true);return Map.copyOf(hints);}
+        }).map(parameters->{
+            if(parameters.containsKey("error") || !"urn:ietf:params:oauth:token-type:access_token".equals(parameters.get("issued_token_type")))throw unavailable();
+            try {
+                if(!com.nimbusds.oauth2.sdk.TokenResponse.parse(new net.minidev.json.JSONObject(parameters)).indicatesSuccess())throw unavailable();
+            } catch(com.nimbusds.oauth2.sdk.ParseException invalid){throw unavailable();}
+            return converter.convert(parameters);
         }));
     }
     @Override public Mono<GovernedQuoteOffersApi> requireExchangedClient(PolicyBindingAdmission.Permit permit){return Mono.defer(()->{
@@ -103,17 +112,22 @@ public final class ExchangedAcceptedQuoteClientProviderImpl implements AcceptedQ
         permit.remaining(clock,System::nanoTime);var now=clock.instant();
         Object rawScope=jwt.getClaims().get("scope");
         boolean targetScope=rawScope instanceof String value && Set.copyOf(java.util.Arrays.asList(value.split(" ",-1))).equals(SCOPES);
-        boolean originalScope=rawScope instanceof String value && Set.copyOf(java.util.Arrays.asList(value.split(" ",-1))).containsAll(SCOPES);
-        if(!originalScope || !issuer.equals(claim(jwt,"iss")) || !permit.actor().issuer().equals(claim(jwt,"iss"))
-            || !permit.actor().subject().equals(claim(jwt,"sub")) || !"HUMAN".equals(claim(jwt,"principal_kind"))
+        boolean originalScope=rawScope instanceof String value && Set.copyOf(java.util.Arrays.asList(value.split(" ",-1))).equals(Set.of(policyScope(permit)));
+        if(!(target?targetScope:originalScope) || !issuer.equals(claim(jwt,"iss")) || !permit.actor().issuer().equals(claim(jwt,"iss"))
+            || !permit.actor().subject().equals(claim(jwt,"sub")) || !target && !permit.actor().clientId().equals(claim(jwt,clientClaim))
+            || !"HUMAN".equals(claim(jwt,"principal_kind"))
             || !Objects.equals(permit.partyId().toString(),claim(jwt,"party_id"))
-            || !permit.resourceTenantId().toString().equals(claim(jwt,"tenant_id"))
             || !permit.actor().platformTenantId().equals(claim(jwt,"tenant_id"))
             || !(jwt.getClaims().get("exp") instanceof java.time.Instant) || !(jwt.getClaims().get("nbf") instanceof java.time.Instant)
             || jwt.getExpiresAt()==null || jwt.getNotBefore()==null || !jwt.getExpiresAt().isAfter(now) || jwt.getNotBefore().isAfter(now)
             || permit.notAfter().isAfter(jwt.getExpiresAt()) || target && (!(jwt.getClaims().get("aud") instanceof List<?> values) || values.size()!=1 || !(values.getFirst() instanceof String) || !audience.equals(values.getFirst())
                 || !targetScope || !delegatingClient.equals(claim(jwt,clientClaim)) || jwt.getExpiresAt().isAfter(original.getExpiresAt())))throw unavailable();
     }
+    private static String policyScope(PolicyBindingAdmission.Permit permit){return switch(permit.request().action()){
+        case BIND -> "insurance:policies:bind";
+        case ISSUE -> "insurance:policies:issue";
+        case RECOVER -> throw unavailable();
+    };}
     private static JdkClientHttpConnector productionConnector(ClientRegistration registration,String issuer,String audience,String clientClaim,String client,URI endpoint){
         Objects.requireNonNull(registration);required(issuer);required(audience);required(clientClaim);required(client);https(endpoint);tokenEndpoint(registration);
         if(!AuthorizationGrantType.TOKEN_EXCHANGE.equals(registration.getAuthorizationGrantType())

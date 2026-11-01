@@ -71,7 +71,7 @@ class GeneratedSdkPolicyContractPortTest {
     @Test void actualGeneratedBearerAndTypedPartyPageAdmitTheExactActiveContract() throws Exception {
         Path expected=Path.of("..","..","core-common-contract-mgmt","core-common-contract-mgmt-sdk","target","classes").toRealPath();
         for(Class<?> type:List.of(ApiClient.class,ContractPartyDTO.class,PaginationResponseContractPartyDTO.class))
-            assertEquals(expected,Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()).toRealPath());
+            FreshSourceSdkFixture.require(type,expected);
         var fixture=new FixtureImpl(contract(),page(),HttpStatus.OK);
         StepVerifier.create(fixture.invoke()).verifyComplete();
         assertEquals(2,fixture.captured.size());
